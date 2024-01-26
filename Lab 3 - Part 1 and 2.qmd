@@ -1,0 +1,217 @@
+---
+title: "Lab 3"
+author: "Meet Muchhala"
+format: 
+  html:
+    code-fold: show
+    toc: true
+    number-sections: true
+    embed-resources: true
+editor: visual
+execute: 
+  echo: true
+  message: false
+  warning: false
+---
+
+# Part 1 - Lab 3
+
+## Setup of libraries 
+
+```{r steup}
+
+library(tidyverse)
+library(here)
+library(broom)
+
+### spatial packages
+
+library(sf)
+library(tmap)
+```
+
+## Read in our data
+
+Files in the data folder: SHP file contains vector info, DBF contains details of what those vectors are
+
+```{r}
+
+ca_counties_raw_sf <- read_sf(here('data', 'ca_counties', 'CA_Counties_TIGER2016.shp')) ## all other files apart from .shp are also important
+
+ca_counties_sf <- ca_counties_raw_sf %>% 
+  janitor::clean_names() %>% 
+  mutate(land_km2 = aland / 1e6) %>% 
+  select(county = name, land_km2)
+
+ca_counties_df <- ca_counties_sf %>% 
+  as.data.frame() %>% 
+  select(-geometry)
+
+
+```
+
+
+## Check the CRS
+
+```{r}
+
+ca_counties_sf %>% st_crs()
+ca_counties_sf %>% terra::crs()
+
+```
+
+
+## Explore it visually
+
+```{r}
+
+plot(ca_counties_sf %>%  select(land_km2))
+
+## or plot(ca_counties_sf) for entire stuff
+
+```
+
+Other option for visualizing
+
+```{r}
+
+ggplot() +
+  geom_sf(data = ca_counties_sf, aes(fill = land_km2), color = 'white', size = 0.1) +
+  theme_void() +
+  scale_fill_gradientn(colors = c('lightblue', 'orange', 'pink'))
+```
+
+
+## Read data of sesbania records (invasive species)
+
+```{r}
+sesbania_sf <- read_sf(here('data','red_sesbania','ds80_for_lab.gpkg')) %>% 
+  janitor::clean_names()
+
+sesbania_sf %>%  st_crs() 
+ 
+
+## Notice that this file is in a diff reference system than the earlier counties file
+
+plot(sesbania_sf %>%  select(id))
+```
+
+## The analysis
+
+Let's find the count of red sesbania obsrved location in this dataset, by county, then create a map of all CA counties using fill color to indicate sesbania counts
+
+### Pseudocode
+
+- Align the CRS of both of the dataset geometries
+- Mutate observed Y/N into binary?
+- Something around dates of when 
+- Write the code to plot the map of CA and boundaries and overlay that with red sesbania (create if condition in terms of which vector points to display and which to not)
+
+## Transform the CRS so records match counties (sometimes you have to follow guidelines of which CRS is requoired to be followed)
+
+```{r}
+
+sesbania_3857_sf <- st_transform(sesbania_sf, 3857)
+
+### if you don't know the EPSG code:
+## sesbania_3857_2_sf <- st_transform(sesbania_sf, st_crs(ca_counties_sf))
+
+# Then check it: 
+sesbania_3857_sf %>% st_crs()
+
+```
+
+```{r}
+ggplot() +
+  geom_sf(data = ca_counties_sf) +
+  geom_sf(data = sesbania_3857_sf, size = 1, color = "red")
+```
+
+
+## Spatial join
+
+How can I go about joining these data so that I can find counts? Don't worry...`st_join()` has you covered for spatial joins!
+
+
+```{r}
+ca_sesb_sf <- ca_counties_sf %>% 
+  st_join(sesbania_3857_sf)
+
+sesb_ca_sf<-sesbania_3857_sf %>% 
+  st_join(ca_counties_sf)
+
+head(ca_sesb_sf)
+
+```
+
+Note: joining defaults to keeping the geometry of the first object, and adds the records of the second where they spatially overlap the first (but drops the geometry of the second). And then we can find counts (note: these are not counts for individual plants, but by record in the dataset) by county. We can't just count the rows (e.g., using count()) because some rows are counties with no records (and sesbania information is all NAs).
+
+```{r}
+
+sesb_counts_sf <- ca_sesb_sf %>% 
+  group_by(county) %>%
+  summarize(n_records = sum(!is.na(id)))
+
+head(sesb_counts_sf)
+```
+
+Then we can plot a choropleth using the number of records for red sesbania as the fill color (instead of what we used previously, land area):
+
+```{r}
+
+ggplot(data = sesb_counts_sf) +
+  geom_sf(aes(fill = n_records), color = "white", size = 0.1) +
+  scale_fill_gradientn(colors = c("lightgray","orange","red")) +
+  theme_minimal() +
+  labs(fill = "Number of S. punicea records")
+
+```
+
+## Next analysis:
+
+For the county with the greater=st number of red sesbania records, make a map of those location and where they occur within the county
+
+### Pseudocode:
+
+- First find the location of the county with maximum sesbania records (maybe a max function)
+- Filter that county in the dataset
+take sub
+_ We also need to find a way to integrate all the points of that county in the dataset, maybe plot the other dataset additionally
+- Then plot it!
+
+
+```{r}
+
+county_max <- sesb_counts_sf %>% 
+  filter(n_records == max(n_records)) %>% 
+  pull(county)
+
+solano_sesb_sf <- sesb_ca_sf %>% 
+  filter(county %in% county_max) ## putting in operator since incase there were two max counties, it would count both
+
+solano_sf <- ca_counties_sf %>% 
+  filter(county %in% county_max)
+
+ggplot() +
+  geom_sf(data = solano_sf) +
+  geom_sf(data = solano_sesb_sf, color = 'red')
+
+```
+
+
+```{r}
+
+
+#| eval: false ### the interactive map makes the HTML huge
+#| echo: true
+
+# Set the viewing mode to "interactive":
+tmap_mode(mode = "view")
+
+# Then make a map (with the polygon fill color updated by variable 'land_km2', updating the color palette to "BuGn"), then add another shape layer for the sesbania records (added as dots):
+tm_shape(ca_counties_sf) +
+  tm_fill("land_km2", palette = "BuGn") +
+  tm_shape(sesbania_sf) +
+  tm_dots()
+```
+
